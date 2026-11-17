@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Warm the V4 query path that short-context eager forwards omit."""
 
+import importlib
+import logging
 from contextvars import ContextVar
 
 import torch
@@ -8,6 +10,8 @@ from vllm.forward_context import get_forward_context
 from vllm.platforms import current_platform
 
 from vllm_sail.patch.utils import PATCH_MARKER, patch
+
+logger = logging.getLogger(__name__)
 
 _GRAPH_WARMUP = ContextVar("ppu_dsv4_graph_warmup", default=False)
 _RUNNER = "vllm.v1.worker.gpu_model_runner"
@@ -21,17 +25,28 @@ _REMOVE_WHEN = (
     "quantization even when all short-context candidates are selected."
 )
 
+# The V1 runner module may be broken in partial-upgrade environments (newer
+# gpu_model_runner.py importing symbols absent from older sibling modules).
+# Probe it once so the V1 patch can be skipped gracefully.
+try:
+    importlib.import_module(_RUNNER)
+    _V1_RUNNER_AVAILABLE = True
+except ImportError as _exc:
+    _V1_RUNNER_AVAILABLE = False
+    logger.debug("Skipping V1 runner patch (%s): %s", _RUNNER, _exc)
 
-@patch(
-    _RUNNER,
-    "GPUModelRunner._warmup_and_capture",
-    reason="Mark graph warmups so the V4 short-context path initializes captured JITs.",
-    affected_versions=">=0.32.0,<0.33.0",
-    remove_when=_REMOVE_WHEN,
-)
-def warmup_and_capture(self, *args, **kwargs):
-    original = getattr(warmup_and_capture, PATCH_MARKER)[_RUNNER_TARGET]
-    return _run_graph_warmup(original, self, args, kwargs)
+
+if _V1_RUNNER_AVAILABLE:
+    @patch(
+        _RUNNER,
+        "GPUModelRunner._warmup_and_capture",
+        reason="Mark graph warmups so the V4 short-context path initializes captured JITs.",
+        affected_versions=">=0.32.0,<0.33.0",
+        remove_when=_REMOVE_WHEN,
+    )
+    def warmup_and_capture(self, *args, **kwargs):
+        original = getattr(warmup_and_capture, PATCH_MARKER)[_RUNNER_TARGET]
+        return _run_graph_warmup(original, self, args, kwargs)
 
 
 @patch(

@@ -4,10 +4,24 @@
 from __future__ import annotations
 
 import functools
+import logging
 import sys
 
 from vllm.platforms import current_platform
-from vllm.v1.worker import gpu_model_runner as _runner
+
+logger = logging.getLogger(__name__)
+
+# The V1 runner module may be broken in partial-upgrade environments (newer
+# gpu_model_runner.py importing symbols absent from older sibling modules).
+# Probe it once so the patches below can be skipped gracefully.
+try:
+    from vllm.v1.worker import gpu_model_runner as _runner
+    _V1_RUNNER_AVAILABLE = True
+except ImportError as _exc:
+    _runner = None  # type: ignore[assignment]
+    _V1_RUNNER_AVAILABLE = False
+    logger.debug("Skipping V1 runner patches: %s", _exc)
+
 from vllm.v1.worker.gpu.spec_decode import rejection_sampler_utils as _sampler
 
 from vllm_sail.patch._upstream import runtime as _bodies
@@ -43,10 +57,11 @@ _CONSUMERS = [
     "vllm.v1.worker.gpu.spec_decode.rejection_sampler",
     "vllm.v1.watermarking.spec_decode",
 ]
-_install(
-    _runner,
-    _runner.GPUModelRunner,
-    "may_reinitialize_input_batch",
-    _bodies.may_reinitialize_input_batch,
-)
+if _V1_RUNNER_AVAILABLE:
+    _install(
+        _runner,
+        _runner.GPUModelRunner,
+        "may_reinitialize_input_batch",
+        _bodies.may_reinitialize_input_batch,
+    )
 _install(_sampler, _sampler, "rejection_sample", _bodies.rejection_sample)

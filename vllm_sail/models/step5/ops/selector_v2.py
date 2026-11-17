@@ -78,10 +78,16 @@ def select_regions(
     Includes all allocation and stabilization cost.
     """
     import torch
-    from vllm.models.step5.nvidia.ops.sparse_indexer import (
-        _stable_topk_regions,
-        select_all_regions,
-    )
+    try:
+        from vllm.models.step5.common.ops.sparse_indexer import (
+            _stable_topk_regions,
+            select_all_regions,
+        )
+    except ImportError:
+        from vllm.models.step5.nvidia.ops.sparse_indexer import (  # type: ignore[no-redef]
+            _stable_topk_regions,
+            select_all_regions,
+        )
     from vllm.triton_utils import triton
 
     if scores.ndim != 2 or scores.dtype != torch.float32 or not scores.is_contiguous():

@@ -30,12 +30,29 @@ replacing a module-global ``@triton.jit`` helper effective.
 
 from __future__ import annotations
 
-from vllm.models.step5.nvidia.ops import (
-    indexer_norm_rope as _indexer,
-    qkv_indexer_norm_rope as _joint,
-    sparse_indexer_scores as _scores,
-    summary_update as _summary,
-)
+# Upstream moved indexer_norm_rope, sparse_indexer_scores and summary_update
+# from nvidia/ops/ to common/ops/ in a later revision.  qkv_indexer_norm_rope
+# stays in nvidia/ops/.  Try the new paths first, fall back to the old ones.
+try:
+    from vllm.models.step5.common.ops import (
+        indexer_norm_rope as _indexer,
+        sparse_indexer_scores as _scores,
+        summary_update as _summary,
+    )
+except ImportError:
+    from vllm.models.step5.nvidia.ops import (  # type: ignore[no-redef]
+        indexer_norm_rope as _indexer,
+        sparse_indexer_scores as _scores,
+        summary_update as _summary,
+    )
+from vllm.models.step5.nvidia.ops import qkv_indexer_norm_rope as _joint
+
+# Resolve module paths from the imported objects so both old (nvidia/) and new
+# (common/) layouts work without hardcoded strings.
+_INDEXER_MODULE = _indexer.__name__
+_SCORES_MODULE = _scores.__name__
+_SUMMARY_MODULE = _summary.__name__
+_JOINT_MODULE = _joint.__name__
 
 from vllm_sail.models.step5.ops import soft_fp8
 from vllm_sail.patch.utils import patch
@@ -64,19 +81,19 @@ def _install(module: str, name: str, replacement) -> None:
 
 # Device helpers: resolved by upstream kernels through module globals.
 _install(
-    "vllm.models.step5.nvidia.ops.summary_update",
+    _SUMMARY_MODULE,
     "_store_summary",
     soft_fp8._store_summary,
 )
 _install(
-    "vllm.models.step5.nvidia.ops.qkv_indexer_norm_rope",
+    _JOINT_MODULE,
     "_indexer_norm_rope",
     soft_fp8._indexer_norm_rope,
 )
 
 # Launch sites: E4M3 query arguments are passed as bytes on PPU.
 _install(
-    "vllm.models.step5.nvidia.ops.indexer_norm_rope",
+    _INDEXER_MODULE,
     "_indexer_norm_rope",
     soft_fp8.ByteFP8Launch(
         _indexer._indexer_norm_rope,
@@ -87,7 +104,7 @@ _install(
 # _joint_prepare itself has no FP8 op; its indexer half is the helper above.
 # Only QOut is converted: its FP8_CACHE store relies on the cache's FP8 type.
 _install(
-    "vllm.models.step5.nvidia.ops.qkv_indexer_norm_rope",
+    _JOINT_MODULE,
     "_joint_prepare",
     soft_fp8.ByteFP8Launch(
         _joint._joint_prepare,
@@ -96,14 +113,14 @@ _install(
     ),
 )
 _install(
-    "vllm.models.step5.nvidia.ops.sparse_indexer_scores",
+    _SCORES_MODULE,
     "_direct_scores",
     soft_fp8.ByteFP8Launch(
         _scores._direct_scores, soft_fp8._direct_scores, byte_args=(0,)
     ),
 )
 _install(
-    "vllm.models.step5.nvidia.ops.sparse_indexer_scores",
+    _SCORES_MODULE,
     "_paged_scores_sm90",
     soft_fp8.ByteFP8Launch(
         _scores._paged_scores_sm90, soft_fp8._paged_scores_sm90, byte_args=(0,)

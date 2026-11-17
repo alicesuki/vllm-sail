@@ -13,7 +13,8 @@ from vllm.platforms import current_platform
 from vllm_sail import envs
 from vllm_sail.patch.utils import patch
 
-_TARGET = "vllm.models.step5.nvidia.ops.sparse_indexer"
+_TARGET_NEW = "vllm.models.step5.common.ops.sparse_indexer"
+_TARGET_OLD = "vllm.models.step5.nvidia.ops.sparse_indexer"
 _REASON = "Step5 selector_v2 exact FP32 radix candidate reusing stabilization; off by default, chosen by UT performance."
 _REMOVE = "Upstream per_row provides an equivalent or faster streaming radix selector."
 _installed = False
@@ -24,11 +25,16 @@ def install():
     if _installed:
         return
     try:
-        module = importlib.import_module(_TARGET)
-    except ModuleNotFoundError as exc:
-        if exc.name and (_TARGET == exc.name or _TARGET.startswith(exc.name + ".")):
-            return
-        raise
+        module = importlib.import_module(_TARGET_NEW)
+        _TARGET = _TARGET_NEW
+    except ModuleNotFoundError:
+        try:
+            module = importlib.import_module(_TARGET_OLD)
+            _TARGET = _TARGET_OLD
+        except ModuleNotFoundError as exc:
+            if exc.name and (_TARGET_OLD == exc.name or _TARGET_OLD.startswith(exc.name + ".")):
+                return
+            raise
     original = module.select_regions
 
     @functools.wraps(original)

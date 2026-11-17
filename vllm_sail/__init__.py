@@ -48,6 +48,57 @@ _SHIMS_INSTALLED = False
 _PATCHES_APPLIED = False
 _REGISTRIES_APPLIED = False
 _MODELS_REGISTERED = False
+_MONITOR_SHIM_INSTALLED = False
+
+
+def _install_compat_shims() -> None:
+    """Inject stubs for symbols missing due to vLLM version skew.
+
+    Some vLLM builds ship a ``gpu_model_runner.py`` from a newer revision while
+    other modules remain at an older version.  The runner then imports names that
+    do not yet exist in those older modules, causing an ``ImportError`` before
+    any patch can be applied.  This function injects minimal no-op stubs so the
+    import succeeds; runtime behavior is unchanged because the stubs are only
+    reached when the real symbol is absent.
+
+    Known skew points handled here:
+
+    * ``vllm.compilation.monitor.set_cudagraph_capturing_enabled``
+      – newer runner imports it; older monitor.py lacks it.
+    * ``vllm.config.ec_manager_config.EncoderCacheManagerMetadata``
+      – newer runner imports it; older ec_manager_config.py only has
+      ``EncoderCacheManagerConfig``.
+    """
+    global _MONITOR_SHIM_INSTALLED
+    if _MONITOR_SHIM_INSTALLED:
+        return
+
+    import contextlib
+    from dataclasses import dataclass as _dataclass
+
+    # ── vllm.compilation.monitor ─────────────────────────────────────────────
+    try:
+        import vllm.compilation.monitor as _monitor
+        if not hasattr(_monitor, "set_cudagraph_capturing_enabled"):
+            @contextlib.contextmanager
+            def _noop_set_cudagraph_capturing_enabled(enabled: bool = True):  # noqa: ARG001
+                yield
+            _monitor.set_cudagraph_capturing_enabled = _noop_set_cudagraph_capturing_enabled
+    except ImportError:
+        pass
+
+    # ── vllm.config.ec_manager_config ────────────────────────────────────────
+    try:
+        import vllm.config.ec_manager_config as _ec_cfg
+        if not hasattr(_ec_cfg, "EncoderCacheManagerMetadata"):
+            @_dataclass
+            class _EncoderCacheManagerMetadataStub:  # noqa: N801
+                """Minimal stub; newer gpu_model_runner.py imports this name."""
+            _ec_cfg.EncoderCacheManagerMetadata = _EncoderCacheManagerMetadataStub
+    except ImportError:
+        pass
+
+    _MONITOR_SHIM_INSTALLED = True
 
 
 def register() -> str:
@@ -94,6 +145,7 @@ def register_out_of_tree() -> None:
     from vllm_sail.compat import check_vllm_compatibility
 
     check_vllm_compatibility()
+    _install_compat_shims()
 
     if not _PATCHES_APPLIED:
         import vllm_sail.patch

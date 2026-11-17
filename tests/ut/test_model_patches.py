@@ -603,9 +603,14 @@ def test_step5_summary_cache_dtype_follows_fp16_switch(
     from types import SimpleNamespace
 
     import torch
-    from vllm.models.step5.nvidia.sparse_summary_cache import (
-        Step5SparseSummaryCacheLayer,
-    )
+    try:
+        from vllm.models.step5.common.sparse_summary_cache import (
+            Step5SparseSummaryCacheLayer,
+        )
+    except ImportError:
+        from vllm.models.step5.nvidia.sparse_summary_cache import (  # type: ignore[no-redef]
+            Step5SparseSummaryCacheLayer,
+        )
 
     config = SimpleNamespace(cache_config=SimpleNamespace(block_size=64))
     get_spec = Step5SparseSummaryCacheLayer.get_kv_cache_spec

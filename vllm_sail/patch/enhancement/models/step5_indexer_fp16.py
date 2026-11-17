@@ -31,14 +31,36 @@ import functools
 import torch
 from vllm.models.step5.nvidia import flashinfer_sparse as _sparse
 from vllm.models.step5.nvidia.flashinfer_sparse import Step5FlashInferSparse
-from vllm.models.step5.nvidia.ops import (
-    indexer_norm_rope as _indexer,
-    qkv_indexer_norm_rope as _joint,
-    sparse_indexer as _pack,
-)
-from vllm.models.step5.nvidia.sparse_summary_cache import (
-    Step5SparseSummaryCacheLayer,
-)
+from vllm.models.step5.nvidia.ops import qkv_indexer_norm_rope as _joint
+
+# Upstream moved indexer_norm_rope, sparse_indexer and sparse_summary_cache
+# from nvidia/ to common/ in a later revision.  Try new paths first.
+try:
+    from vllm.models.step5.common.ops import (
+        indexer_norm_rope as _indexer,
+        sparse_indexer as _pack,
+    )
+    from vllm.models.step5.common import sparse_summary_cache as _summary_cache
+    from vllm.models.step5.common.sparse_summary_cache import (
+        Step5SparseSummaryCacheLayer,
+    )
+except ImportError:
+    from vllm.models.step5.nvidia.ops import (  # type: ignore[no-redef]
+        indexer_norm_rope as _indexer,
+        sparse_indexer as _pack,
+    )
+    from vllm.models.step5.nvidia import sparse_summary_cache as _summary_cache  # type: ignore[no-redef]
+    from vllm.models.step5.nvidia.sparse_summary_cache import (  # type: ignore[no-redef]
+        Step5SparseSummaryCacheLayer,
+    )
+
+# Resolve module paths from the imported objects so both old (nvidia/) and new
+# (common/) layouts work without hardcoded strings.
+_INDEXER_MODULE = _indexer.__name__
+_PACK_MODULE = _pack.__name__
+_JOINT_MODULE = _joint.__name__
+_SUMMARY_CACHE_MODULE = _summary_cache.__name__
+_SPARSE_MODULE = _sparse.__name__
 
 from vllm_sail.models.step5.ops import soft_fp8
 from vllm_sail.patch.bodies import bind_body
@@ -531,12 +553,12 @@ _fp16_logits = bind_body(logits, _sparse)
 # Device helpers resolved by _pack_summary_pages through module globals; with
 # byte summaries they compute upstream's offsets.
 _install(
-    "vllm.models.step5.nvidia.ops.sparse_indexer",
+    _PACK_MODULE,
     "_copy_summary_page",
     soft_fp8._copy_summary_page,
 )
 _install(
-    "vllm.models.step5.nvidia.ops.sparse_indexer",
+    _PACK_MODULE,
     "_copy_summary_tile",
     soft_fp8._copy_summary_tile,
 )
@@ -566,24 +588,24 @@ def _pack_summaries_launcher(mean, *args, **kwargs):
 # model.py imports both launchers inside its forward, so the module attributes
 # are what it calls; pack_*summary_pages resolve _pack_summaries the same way.
 _install(
-    "vllm.models.step5.nvidia.ops.indexer_norm_rope",
+    _INDEXER_MODULE,
     "indexer_norm_rope",
     _indexer_norm_rope_launcher,
 )
 _install(
-    "vllm.models.step5.nvidia.ops.qkv_indexer_norm_rope",
+    _JOINT_MODULE,
     "qkv_indexer_norm_rope",
     _qkv_indexer_norm_rope_launcher,
 )
 _install(
-    "vllm.models.step5.nvidia.ops.sparse_indexer",
+    _PACK_MODULE,
     "_pack_summaries",
     _pack_summaries_launcher,
 )
 
 
 @patch(
-    "vllm.models.step5.nvidia.sparse_summary_cache",
+    _SUMMARY_CACHE_MODULE,
     "Step5SparseSummaryCacheLayer.get_kv_cache_spec",
     reason=_REASON,
     affected_versions=_AFFECTED,
@@ -598,7 +620,7 @@ def _get_kv_cache_spec(self, vllm_config):
 
 
 @patch(
-    "vllm.models.step5.nvidia.flashinfer_sparse",
+    _SPARSE_MODULE,
     "Step5FlashInferSparse.decode_logits",
     reason=_REASON,
     affected_versions=_AFFECTED,
@@ -628,7 +650,7 @@ def _decode_logits(
 
 
 @patch(
-    "vllm.models.step5.nvidia.flashinfer_sparse",
+    _SPARSE_MODULE,
     "Step5FlashInferSparse.logits",
     reason=_REASON,
     affected_versions=_AFFECTED,

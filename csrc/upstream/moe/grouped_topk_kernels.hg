@@ -26,6 +26,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <tuple>
 #include <hggc_fp16.h>
 #include <hggc_bf16.h>
@@ -1400,10 +1401,32 @@ INSTANTIATE_NOAUX_TC(__ppu_bfloat16, __ppu_bfloat16, int32_t, SCORING_NONE);
 }  // end namespace moe
 }  // namespace vllm
 
+namespace {
+// Padded rows (CUDA-graph / DP padding) must emit zero routing weights and
+// -1 expert ids so dispatch and the experts skip them. Mirrors upstream's
+// per-kernel is_padding handling with a single post-pass over those rows.
+__global__ void grouped_topk_apply_padding_mask(float* topk_values,
+                                                int32_t* topk_indices,
+                                                const bool* is_padding,
+                                                int64_t num_tokens,
+                                                int64_t topk) {
+  const int64_t row = static_cast<int64_t>(blockIdx.x);
+  if (row >= num_tokens || !is_padding[row]) {
+    return;
+  }
+  for (int64_t i = static_cast<int64_t>(threadIdx.x); i < topk;
+       i += static_cast<int64_t>(blockDim.x)) {
+    topk_values[row * topk + i] = 0.0f;
+    topk_indices[row * topk + i] = static_cast<int32_t>(-1);
+  }
+}
+}  // namespace
+
 std::tuple<torch::stable::Tensor, torch::stable::Tensor> grouped_topk(
     torch::stable::Tensor const& scores, int64_t n_group, int64_t topk_group,
     int64_t topk, bool renormalize, double routed_scaling_factor,
-    torch::stable::Tensor const& bias, int64_t scoring_func = 0) {
+    torch::stable::Tensor const& bias, int64_t scoring_func,
+    const std::optional<torch::stable::Tensor>& is_padding) {
   const auto data_type = scores.scalar_type();
   const auto bias_type = bias.scalar_type();
   STD_TORCH_CHECK(scores.dim() == 2, "scores must be a 2D Tensor");
@@ -1425,6 +1448,21 @@ std::tuple<torch::stable::Tensor, torch::stable::Tensor> grouped_topk(
       scoring_func == vllm::moe::SCORING_NONE ||
           scoring_func == vllm::moe::SCORING_SIGMOID,
       "scoring_func must be SCORING_NONE (0) or SCORING_SIGMOID (1)");
+
+  // Optional per-token padding mask; padded rows get zero weights and -1 ids.
+  const bool* is_padding_ptr = nullptr;
+  if (is_padding.has_value()) {
+    STD_TORCH_CHECK(
+        is_padding->scalar_type() == torch::headeronly::ScalarType::Bool,
+        "is_padding must be bool");
+    STD_TORCH_CHECK(is_padding->dim() == 1 && is_padding->size(0) == num_tokens,
+                    "is_padding must have one entry per token");
+    STD_TORCH_CHECK(is_padding->is_contiguous(),
+                    "is_padding must be contiguous");
+    STD_TORCH_CHECK(is_padding->device() == scores.device(),
+                    "is_padding must be on the scores device");
+    is_padding_ptr = is_padding->const_data_ptr<bool>();
+  }
 
   // Always output float32 for topk_values (eliminates Python-side conversion)
   auto topk_values = torch::stable::new_empty(
@@ -1505,6 +1543,21 @@ std::tuple<torch::stable::Tensor, torch::stable::Tensor> grouped_topk(
       STD_TORCH_CHECK(
           false, "Invalid dtype, only supports float16, float32, and bfloat16");
       break;
+  }
+
+  if (is_padding_ptr != nullptr && num_tokens > 0) {
+    hggcLaunchConfig_t pad_config;
+    pad_config.stream = stream;
+    pad_config.gridDim = static_cast<uint32_t>(num_tokens);
+    pad_config.blockDim = 32;  // topk <= 32, one warp covers a row
+    pad_config.dynamicSmemBytes = 0;
+    pad_config.numAttrs = 0;
+    pad_config.attrs = nullptr;
+    hggcLaunchKernelEx(&pad_config, &grouped_topk_apply_padding_mask,
+                       reinterpret_cast<float*>(topk_values.mutable_data_ptr()),
+                       reinterpret_cast<int32_t*>(
+                           topk_indices.mutable_data_ptr()),
+                       is_padding_ptr, num_tokens, topk);
   }
 #undef LAUNCH_KERNEL
 #undef LAUNCH_KERNEL_SF

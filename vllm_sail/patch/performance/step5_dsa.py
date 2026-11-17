@@ -25,7 +25,8 @@ from vllm.platforms import current_platform
 from vllm_sail import envs
 from vllm_sail.patch.utils import patch
 
-_MODULE = "vllm.models.step5.nvidia.ops.sparse_indexer_scores"
+_MODULE_NEW = "vllm.models.step5.common.ops.sparse_indexer_scores"
+_MODULE_OLD = "vllm.models.step5.nvidia.ops.sparse_indexer_scores"
 _CONSUMERS = ("vllm.models.step5.nvidia.flashinfer_sparse",)
 _NAME = "paged_mqa_logits_sm90"
 _REASON = (
@@ -47,12 +48,17 @@ def install() -> None:
     if _installed:
         return
     try:
-        module = importlib.import_module(_MODULE)
-    except ModuleNotFoundError as exc:
-        # A vLLM build without the Step5 tree is not an error.
-        if exc.name and (_MODULE == exc.name or _MODULE.startswith(exc.name + ".")):
-            return
-        raise
+        module = importlib.import_module(_MODULE_NEW)
+        _MODULE = _MODULE_NEW
+    except ModuleNotFoundError:
+        try:
+            module = importlib.import_module(_MODULE_OLD)
+            _MODULE = _MODULE_OLD
+        except ModuleNotFoundError as exc:
+            # A vLLM build without the Step5 tree is not an error.
+            if exc.name and (_MODULE_OLD == exc.name or _MODULE_OLD.startswith(exc.name + ".")):
+                return
+            raise
 
     original = getattr(module, _NAME)
     optimized = None

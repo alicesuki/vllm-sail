@@ -29,14 +29,28 @@ change, and are installed by
 from __future__ import annotations
 
 import torch
-from vllm.models.step5.nvidia.ops.indexer_norm_rope import (
-    _layer_norm_stats,
-    _rms_norm_variance,
-)
-from vllm.models.step5.nvidia.ops.summary_update import (
-    _maximum,
-    _update_decode_values,
-)
+
+# Upstream moved these helpers from nvidia/ops/ to common/ops/ in a later
+# revision.  Try the new path first, fall back to the old one so both vLLM
+# generations work without a version gate.
+try:
+    from vllm.models.step5.common.ops.indexer_norm_rope import (
+        _layer_norm_stats,
+        _rms_norm_variance,
+    )
+    from vllm.models.step5.common.ops.summary_update import (
+        _maximum,
+        _update_decode_values,
+    )
+except ImportError:
+    from vllm.models.step5.nvidia.ops.indexer_norm_rope import (  # type: ignore[no-redef]
+        _layer_norm_stats,
+        _rms_norm_variance,
+    )
+    from vllm.models.step5.nvidia.ops.summary_update import (  # type: ignore[no-redef]
+        _maximum,
+        _update_decode_values,
+    )
 from vllm.platforms import current_platform
 from vllm.triton_utils import tl, triton
 
