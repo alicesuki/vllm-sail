@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+from copy import deepcopy
 
 import pytest
 
@@ -239,6 +240,30 @@ def target_problems(root, hooks):
             ):
                 # The generated dataclass API has its own source dependency
                 # checks and real constructor/replace/merge behavior tests.
+                continue
+            if hook.target == "vllm.models.step5.nvidia.mega_moe.Step5MegaMoE":
+                constructor = next(
+                    (
+                        node
+                        for node in getattr(resolved.node, "body", [])
+                        if isinstance(node, FUNC_NODES) and node.name == "__init__"
+                    ),
+                    None,
+                )
+                if constructor is None:
+                    failures.append(f"{hook.target}: missing explicit constructor")
+                    continue
+                constructor = deepcopy(constructor)
+                if not constructor.args.args or constructor.args.args[0].arg != "self":
+                    failures.append(f"{hook.target}: unresolved constructor receiver")
+                    continue
+                constructor.args.args.pop(0)
+                # The full constructor contract covers **expert_kwargs;
+                # forwarding behavior is verified by the MegaMoE UT.
+                failures.extend(
+                    f"{hook.target}: {problem}"
+                    for problem in compatibility_problems(hook.node, constructor)
+                )
                 continue
             if consumers is None:
                 consumers = imported_consumer_calls(root)
@@ -597,6 +622,23 @@ def test_flashmla_signature_fault_is_rejected_with_optional_source_missing(
     assert problems and any(target in problem for problem in problems)
 
 
+@pytest.mark.upstream_source
+@pytest.mark.parametrize(
+    "signature", ["", "vllm_config", "vllm_config, *, required, **kwargs"]
+)
+def test_step5_factory_contract_rejects_broken_bindings(
+    upstream_source_root, signature
+):
+    """Missing or new required params must fail even with **expert_kwargs calls."""
+    hooks, unresolved = scan_patch_file(PATCH_ROOT / "enhancement/mega_moe.py")
+    assert not unresolved
+    target = "vllm.models.step5.nvidia.mega_moe.Step5MegaMoE"
+    hook = next(hook for hook in hooks if hook.target == target)
+    assert not target_problems(upstream_source_root, [hook])
+    broken = hook._replace(node=_function(f"def replacement({signature}): pass"))
+    assert target_problems(upstream_source_root, [broken])
+
+
 def test_unconditional_dangling_import_cannot_be_repaired_by_later_assignment(tmp_path):
     package = tmp_path / "vllm"
     package.mkdir()
@@ -688,14 +730,29 @@ def test_every_unresolved_installation_has_a_feature_contract():
         # Step5 kernel/launcher rebinding through one metadata helper; the
         # targets and fallbacks are exercised in test_model_patches.py and
         # test_step5_score_pipeline.py.
-        ("patch/enhancement/models/step5_indexer_fp16.py", "_install", "module", "name"),
+        (
+            "patch/enhancement/models/step5_indexer_fp16.py",
+            "_install",
+            "module",
+            "name",
+        ),
         ("patch/enhancement/models/step5_soft_fp8.py", "_install", "module", "name"),
         # Loaded consumer aliases of sparse_decode_attention; covered by
         # test_step5_dsa_native.py::test_decode_bound_aliases.
-        ("patch/performance/step5_dsa_prefill.py", "_install_native_decode", "name", "attr"),
+        (
+            "patch/performance/step5_dsa_prefill.py",
+            "_install_native_decode",
+            "name",
+            "attr",
+        ),
         # V1/V2 runner module paths come from the caller's literal loop;
         # covered by test_layerwise_nvtx.py.
-        ("profiling/layerwise.py", "_install_v2_dummy_run", "module_path", "'GPUModelRunner._dummy_run'"),
+        (
+            "profiling/layerwise.py",
+            "_install_v2_dummy_run",
+            "module_path",
+            "'GPUModelRunner._dummy_run'",
+        ),
     }
     for site in unresolved:
         call = ast.parse(site.expression, mode="eval").body
