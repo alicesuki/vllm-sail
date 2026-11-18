@@ -464,26 +464,45 @@ def ppu_sparse_attn_indexer(
                 decode_weights = pack_seq_triton(
                     decode_weights, decode_lens, pad_value=0
                 ).reshape(num_padded_tokens, -1)
-            contexts, tables, request_ids = _paged_decode_rows(
-                seq_lens,
-                decode_metadata.block_table,
-                decode_lens,
-                next_n,
-                decode_metadata.indices,
-                decode_metadata.per_req_decode_lens,
-            )
-            schedule = get_paged_mqa_logits_metadata(
-                contexts,
-                kv_cache.shape[1],
-                get_num_sms(),
-                (
-                    1,
-                    padded_q_quant_cast.shape[-2],
-                    head_dim,
-                    torch.int8 if use_fp4_cache else q_dtype,
-                ),
-                indices=request_ids if use_fp4_cache else None,
-            )
+            if (
+                not use_fp4_cache
+                and q_dtype == torch.int8
+                and current_platform.is_ppu()
+                and current_platform.is_device_capability((8, 0))
+                and next_n == 1
+                and not decode_metadata.requires_padding
+                and decode_metadata.write_max_decode_len > 1
+                and seq_lens.shape == (num_decode_tokens, 1)
+                and seq_lens.is_contiguous()
+                and decode_metadata.block_table.is_contiguous()
+            ):
+                # The builder already flattened these speculative queries and
+                # zeroed graph padding. INT8 does not consume request IDs.
+                contexts = seq_lens
+                tables = decode_metadata.block_table
+                request_ids = None
+                schedule = decode_metadata.schedule_metadata
+            else:
+                contexts, tables, request_ids = _paged_decode_rows(
+                    seq_lens,
+                    decode_metadata.block_table,
+                    decode_lens,
+                    next_n,
+                    decode_metadata.indices,
+                    decode_metadata.per_req_decode_lens,
+                )
+                schedule = get_paged_mqa_logits_metadata(
+                    contexts,
+                    kv_cache.shape[1],
+                    get_num_sms(),
+                    (
+                        1,
+                        padded_q_quant_cast.shape[-2],
+                        head_dim,
+                        torch.int8 if use_fp4_cache else q_dtype,
+                    ),
+                    indices=request_ids if use_fp4_cache else None,
+                )
             flat_q = padded_q_quant_cast.reshape(
                 num_padded_tokens, 1, *padded_q_quant_cast.shape[2:]
             )
