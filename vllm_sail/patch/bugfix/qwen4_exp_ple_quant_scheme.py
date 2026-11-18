@@ -41,7 +41,7 @@ from vllm_sail.patch.utils import patch
 
 _NGRAM_MODULE = "vllm.models.qwen4_exp.common.ngram_embedding"
 _NGRAM_TARGET = "Qwen4ExpPLEEmbeddingMethod.from_quant_config"
-_AFFECTED = ">=0.32.0,<0.33.0"
+_AFFECTED = ">=0.33.0,<0.34.0"
 
 REASON_DISPATCH = (
     "Qwen4ExpPLEEmbeddingMethod.from_quant_config only honors an explicit "
