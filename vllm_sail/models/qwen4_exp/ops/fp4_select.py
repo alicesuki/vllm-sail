@@ -132,7 +132,6 @@ def qsa_select_paged_decode(
             fp4_avg_metadata_extra(decode_query_len),
         ),
         columns,
-        logits_dtype=torch.bfloat16,
     )
     _topk(logits, visible_blocks, block_indices, token_topk // compress_ratio)
 
@@ -209,12 +208,7 @@ def qsa_select_paged_prefill(
 
     q_values, q_sf = qsa_quant_q_mxfp4(q)
     logits = fp4_mqa_avg_logits(
-        (q_values, q_sf),
-        (k_values, k_sf),
-        row_starts,
-        row_ends,
-        logits_width,
-        logits_dtype=torch.bfloat16,
+        (q_values, q_sf), (k_values, k_sf), row_starts, row_ends, logits_width
     )
     _topk(logits, visible_blocks, block_indices, token_topk // compress_ratio)
 
@@ -285,7 +279,6 @@ def warmup_qsa_mqa_paged_decode(
                 fp4_avg_metadata_extra(next_n),
             ),
             page_rows,
-            logits_dtype=torch.bfloat16,
         )
         profiles.append((next_n, 1))
 
@@ -310,7 +303,6 @@ def warmup_qsa_mqa_paged_decode(
         row_starts,
         row_starts + 1,
         MXFP4_PAGE_ROWS_GRANULARITY,
-        logits_dtype=torch.bfloat16,
     )
     return tuple(profiles)
 
