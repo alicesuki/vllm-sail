@@ -141,8 +141,8 @@ still fails. Reports retain per-entry JUnit XML, logs and execution counts.
 On offline runners, only Hugging Face repositories explicitly declared for the
 selected tests are checked before pytest. Pooling reuse excludes the two
 embedding-dimension cases that require Hugging Face model configuration. The
-remaining cases run offline without Hub cache dependencies, with a minimum
-collection count of 40. This does not qualify either embedding model's support.
+39 remaining cases run offline without Hub cache dependencies and are required
+by the gate. This does not qualify either embedding model's support.
 
 The PPU pipeline consumes validated wheels for single-card M890 reuse, records
 source/wheel/upstream identities and verifies installed-package imports and the

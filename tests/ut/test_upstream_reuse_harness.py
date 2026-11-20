@@ -501,7 +501,7 @@ def test_deselected_hub_cases_do_not_block_offline_reuse(
         "])\n"
         "def test_embed_dimensions(model_info):\n"
         '    raise AssertionError("Hub-dependent case must be deselected")\n'
-        '@pytest.mark.parametrize("case", range(42))\n'
+        '@pytest.mark.parametrize("case", range(39))\n'
         "def test_other_pooling_parameters(case):\n"
         "    assert case >= 0\n"
         '    assert os.environ["HF_HUB_OFFLINE"] == "1"\n'
@@ -512,9 +512,9 @@ def test_deselected_hub_cases_do_not_block_offline_reuse(
         result = runner.run(entry)
     finally:
         runner.close()
-    assert result.collected == result.passed == 42
+    assert result.collected == result.passed == 39
     assert entry.mode == "adapted"
-    assert entry.min_tests == 40
+    assert entry.min_tests == 39
     assert not entry.skip_reason
 
 
