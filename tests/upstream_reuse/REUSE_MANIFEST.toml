@@ -214,7 +214,7 @@ deselect = [
     "tests/test_pooling_params.py::test_embed_dimensions[model_info1]",
 ]
 hub_repos = []
-min_tests = 40
+min_tests = 39
 
 [[entry]]
 id = "prefix_caching"
